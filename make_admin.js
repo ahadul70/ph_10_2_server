@@ -8,20 +8,33 @@ async function makeAdmin() {
     const client = new MongoClient(uri);
     try {
         await client.connect();
-        const db = client.db("version2");
+        const db = client.db("shopDB");
 
-        const result = await db.collection("users").updateOne(
+        console.log(`Attempting to make ${targetEmail} a SUPER ADMIN...`);
+
+        const result = await db.collection("Users").updateOne(
             { email: targetEmail },
-            { $set: { role: 'super_admin' } }
+            {
+                $set: {
+                    role: 'super_admin',
+                    email: targetEmail,
+                    name: "Tom Admin", // Placeholder if new
+                    updatedAt: new Date()
+                }
+            },
+            { upsert: true }
         );
 
-        if (result.modifiedCount > 0) {
-            console.log(`SUCCESS: ${targetEmail} is now a SUPER ADMIN.`);
+        if (result.upsertedCount > 0) {
+            console.log(`SUCCESS: ${targetEmail} was CREATED and is now a SUPER ADMIN.`);
+        } else if (result.modifiedCount > 0) {
+            console.log(`SUCCESS: ${targetEmail} was UPDATED to SUPER ADMIN.`);
         } else {
-            console.log(`NO CHANGE: ${targetEmail} was not updated (maybe already admin or not found).`);
-            const user = await db.collection("users").findOne({ email: targetEmail });
-            console.log("Current State:", user);
+            console.log(`NO CHANGE: ${targetEmail} is already a SUPER ADMIN.`);
         }
+
+        const user = await db.collection("Users").findOne({ email: targetEmail });
+        console.log("Current Database Entry:", user);
 
     } catch (error) {
         console.error("Error:", error.message);

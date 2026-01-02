@@ -10,6 +10,10 @@ const port = process.env.PORT || 3000;
 
 // Middleware
 const admin = require("firebase-admin");
+const fs = require('fs');
+const path = require('path');
+
+const serviceAccountKeyPath = path.join(__dirname, 'serviceAccountKey.json');
 
 if (process.env.fb_service_key) {
   try {
@@ -18,12 +22,22 @@ if (process.env.fb_service_key) {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
-    console.log("Firebase Admin Initialized successfully.");
+    console.log("✅ Firebase Admin Initialized successfully from ENV.");
   } catch (error) {
-    console.error("FAILED to initialize Firebase Admin:", error);
+    console.error("❌ FAILED to initialize Firebase Admin from ENV:", error);
+  }
+} else if (fs.existsSync(serviceAccountKeyPath)) {
+  try {
+    const serviceAccount = require(serviceAccountKeyPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log("✅ Firebase Admin Initialized successfully from serviceAccountKey.json.");
+  } catch (error) {
+    console.error("❌ FAILED to initialize Firebase Admin from file:", error);
   }
 } else {
-  console.error("CRITICAL: process.env.fb_service_key is NOT DEFINED.");
+  console.error("CRITICAL: Firebase Admin NOT initialized. verifyFBToken WILL FAIL.");
 }
 
 // Middleware
@@ -60,8 +74,7 @@ const verifyFBToken = async (req, res, next) => {
   console.log('All Headers received:', req.headers); // Debugging: See all headers
   console.log('Auth Header extraction: index line 25', authHeader);
   if (!authHeader) {
-    console.log('header in the index.js line 26', authHeader);
-    return res.status(401).send({ message: "Unauthorized" });
+    return res.status(401).send({ message: "Unauthorized: No header" });
   }
   const token = authHeader.split(" ")[1];
   console.log('header in the index.js line 30', token);
@@ -75,8 +88,10 @@ const verifyFBToken = async (req, res, next) => {
     req.user = decodedToken;
     next();
   } catch (error) {
-    console.error("Token verification failed in index.js line 38:", error);
-    return res.status(403).send({ message: "Forbidden",error });
+    console.error("❌ Firebase Token Verification Error:", error.code, error.message);
+    // If you want to see the full error in logs:
+    // console.error(error); 
+    return res.status(403).send({ message: "Forbidden: Token Invalid", error: error.message, code: error.code });
   }
 }
 
@@ -91,32 +106,101 @@ const client = new MongoClient(uri, {
 });
 async function run() {
   try {
-   // await client.connect();
+    // await client.connect();
     const allproductsCollection = client.db("shopDB").collection("allproducts");
     const myImports = client.db("shopDB").collection("Imports");
     const myExports = client.db("shopDB").collection("Exports");
     const usersdb = client.db("shopDB").collection("Users");
 
-        console.log("Database and collections initialized.");
+    console.log("Database and collections initialized.");
 
-        // --- Middlewares ---
+    // --- Middlewares ---
     const verifySuperAdmin = async (req, res, next) => {
       const email = req.user.email;
       console.log('--- verifySuperAdmin Check ---');
       console.log('Request Email:', email);
       const query = { email: email };
-      const user = await usersCollection.findOne(query);
+      const user = await usersdb.findOne(query);
       console.log('DB User Found:', user ? user.email : 'NULL', 'Role:', user ? user.role : 'NULL');
-      
+
       if (user?.role === 'super_admin') {
         next();
       } else {
         console.log('ACCESS DENIED: Role is', user?.role);
-        return res.status(403).send({ message: 'forbidden access admin',error: error });
+        return res.status(403).send({ message: 'forbidden access admin' });
       }
     };
 
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user.email;
+      const user = await usersdb.findOne({ email });
+      if (user?.role === 'admin' || user?.role === 'super_admin') {
+        next();
+      } else {
+        return res.status(403).send({ message: 'forbidden: admin only' });
+      }
+    };
 
+    // --- Admin Product Approval Routes ---
+
+    // Get all pending products
+    app.get("/admin/pending-products", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const pendingProducts = await allproductsCollection.find({ status: "pending" }).toArray();
+        res.send(pendingProducts);
+      } catch (err) {
+        res.status(500).send({ message: "Error fetching pending products" });
+      }
+    });
+
+    // Approve a product (Updated to sync with Exports)
+    app.patch("/admin/products/approve/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        // Find the product first to get details for sync
+        const product = await allproductsCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!product) return res.status(404).send({ message: "Product not found" });
+
+        const result = await allproductsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "approved" } }
+        );
+
+        // Sync with myExports if name and seller match
+        await myExports.updateMany(
+          { name: product.name, seller: product.seller, status: "pending" },
+          { $set: { status: "approved" } }
+        );
+
+        res.send(result);
+      } catch (err) {
+        console.error("Approve product error:", err);
+        res.status(500).send({ message: "Error approving product" });
+      }
+    });
+
+    // Approve an export record (optional but keeps consistency)
+    app.patch("/admin/exports/approve/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await myExports.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "approved" } }
+        );
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Error approving export" });
+      }
+    });
+
+    // get user role
+    app.get("/users/role/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const user = await usersdb.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
 
     // storing user data
     app.post("/users", async (req, res) => {
@@ -139,11 +223,17 @@ async function run() {
 
     app.post("/products", async (req, res) => {
       try {
-        const newProduct = req.body;
-        if (!newProduct || typeof newProduct !== "object") {
+        const rawProduct = req.body;
+        if (!rawProduct || typeof rawProduct !== "object") {
           return res.status(400).json({ error: "Invalid product data" });
         }
 
+        const newProduct = {
+          ...rawProduct,
+          seller: rawProduct.seller || "Anonymous",
+          status: "pending",
+          createdAt: new Date(),
+        };
         const result = await allproductsCollection.insertOne(newProduct);
         res.send(result);
       } catch (err) {
@@ -155,13 +245,13 @@ async function run() {
     // ✅ Get all products
 
     app.get("/products", async (req, res) => {
-      const cursor = allproductsCollection.find().sort({ rating: -1 });
+      const cursor = allproductsCollection.find({ status: "approved" }).sort({ rating: -1 });
       const products = await cursor.toArray();
       res.send(products);
     });
     //Get all popular products
     app.get("/popularproducts", async (req, res) => {
-      const cursor = allproductsCollection.find().sort({ rating: -1 }).limit(6);
+      const cursor = allproductsCollection.find({ status: "approved" }).sort({ rating: -1 }).limit(6);
       const products = await cursor.toArray();
       res.send(products);
     });
@@ -202,10 +292,10 @@ async function run() {
 
     /// this will get all the imports in the my imports page
 
-    app.get("/myimports", async (req, res) => {
+    app.get("/myimports", verifyFBToken, async (req, res) => {
       try {
-        const email = req.query.email;
-        const query = email ? { importer_email: email } : {};
+        const email = req.user.email; // Secure email from verified token
+        const query = { importer_email: email };
         const cursor = myImports.find(query).sort({ _id: -1 });
         const imports = await cursor.toArray();
         res.send(imports);
@@ -216,14 +306,15 @@ async function run() {
     });
 
     // get details for one imported product
-    app.get("/myimports/:id", async (req, res) => {
+    app.get("/myimports/:id", verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
+        const email = req.user.email;
+        const query = { _id: new ObjectId(id), importer_email: email };
         const result = await myImports.findOne(query);
 
         if (!result)
-          return res.status(404).json({ error: "Product not found" });
+          return res.status(404).json({ error: "Product not found or unauthorized" });
         res.send(result);
       } catch (err) {
         console.error(err);
@@ -232,7 +323,7 @@ async function run() {
     });
 
     // this will add products to my imports page/list / db
-    app.post("/myimports", async (req, res) => {
+    app.post("/myimports", verifyFBToken, async (req, res) => {
       try {
         const newImport = req.body;
         const { productId, quantity } = newImport;
@@ -240,6 +331,9 @@ async function run() {
           return res
             .status(400)
             .json({ error: "Missing productId or quantity" });
+
+        // Ensure importer_email matches the verified token
+        newImport.importer_email = req.user.email;
 
         const importResult = await myImports.insertOne(newImport);
 
@@ -256,21 +350,19 @@ async function run() {
     });
 
     //this will remove from my imports page
-    app.delete("/myimports/:id", async (req, res) => {
+    app.delete("/myimports/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
+      const email = req.user.email;
+      const query = { _id: new ObjectId(id), importer_email: email };
       const result = await myImports.deleteOne(query);
       res.send(result);
     });
 
     // this will get all the from my export
-    app.get("/myexports", async (req, res) => {
+    app.get("/myexports", verifyFBToken, async (req, res) => {
       try {
-        const email = req.query.email;
-        let query = {};
-
-        // if user email is provided, filter exports for that user
-        if (email) query.email = email;
+        const email = req.user.email; // Secure email from verified token
+        const query = { email: email };
 
         const exportsData = await myExports.find(query).toArray();
         res.send(exportsData);
@@ -281,13 +373,14 @@ async function run() {
     });
 
     // this will edit products uploaded my export
-    app.patch("/myexports/:id", async (req, res) => {
+    app.patch("/myexports/:id", verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
+        const email = req.user.email;
         const updatedData = req.body;
         delete updatedData._id; // prevent overwrite
 
-        const query = { _id: new ObjectId(id) };
+        const query = { _id: new ObjectId(id), email: email };
         const updateDoc = { $set: updatedData };
 
         const result = await myExports.updateOne(query, updateDoc);
@@ -300,15 +393,16 @@ async function run() {
 
     // this will delete products upload my export
 
-    app.delete("/myexports/:id", async (req, res) => {
+    app.delete("/myexports/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
+      const email = req.user.email;
+      const query = { _id: new ObjectId(id), email: email };
       const result = await myExports.deleteOne(query);
       res.send(result);
     });
 
     // this will add products to my exports page/list / db
-    app.post("/addexports", async (req, res) => {
+    app.post("/addexports", verifyFBToken, async (req, res) => {
       try {
         const newExport = req.body;
 
@@ -320,12 +414,15 @@ async function run() {
         }
 
         const exportDoc = {
+          email: req.user.email, // Secure email from verified token
+          seller: newExport.seller || req.user.name || "Anonymous",
           name: newExport.name,
           image: newExport.image || "",
           price: Number(newExport.price),
           originCountry: newExport.originCountry || "",
           rating: Number(newExport.rating) || 0,
           quantity: Number(newExport.quantity),
+          status: "pending",
           createdAt: new Date(),
         };
 
