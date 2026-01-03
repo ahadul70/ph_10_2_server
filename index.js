@@ -194,6 +194,16 @@ async function run() {
       }
     });
 
+    // Get all approved exports
+    app.get("/admin/approved-exports", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const approvedExports = await myExports.find({ status: "approved" }).toArray();
+        res.send(approvedExports);
+      } catch (err) {
+        res.status(500).send({ message: "Error fetching approved exports" });
+      }
+    });
+
     // get user role
     app.get("/users/role/:email", async (req, res) => {
       const email = req.params.email;
@@ -334,6 +344,7 @@ async function run() {
 
         // Ensure importer_email matches the verified token
         newImport.importer_email = req.user.email;
+        newImport.status = "pending"; // Default status
 
         const importResult = await myImports.insertOne(newImport);
 
@@ -346,6 +357,44 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Import failed" });
+      }
+    });
+
+    // --- Admin Import Management Routes ---
+
+    // Get pending imports
+    app.get("/admin/pending-imports", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        // Fetch where status is pending OR status is missing (for legacy data)
+        const query = { $or: [{ status: "pending" }, { status: { $exists: false } }] };
+        const result = await myImports.find(query).toArray();
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Error fetching pending imports" });
+      }
+    });
+
+    // Get approved imports
+    app.get("/admin/approved-imports", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await myImports.find({ status: "approved" }).toArray();
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Error fetching approved imports" });
+      }
+    });
+
+    // Approve an import
+    app.patch("/admin/imports/approve/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await myImports.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "approved" } }
+        );
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Error approving import" });
       }
     });
 
