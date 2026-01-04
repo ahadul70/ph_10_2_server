@@ -44,10 +44,11 @@ if (process.env.fb_service_key) {
 //app.use(cors());
 const allowedOrigins = [
   "http://localhost:5173",
-  "http://localhost:3000",
+ 
   "https://onebeforethelast-4b04d.web.app",
   "https://your-frontend.vercel.app",
-  "https://your-frontend.netlify.app"
+  "https://your-frontend.netlify.app",
+  "https://ph10scic2.web.app"
 ];
 
 app.use(
@@ -261,9 +262,14 @@ async function run() {
     });
     //Get all popular products
     app.get("/popularproducts", async (req, res) => {
-      const cursor = allproductsCollection.find({ status: "approved" }).sort({ rating: -1 }).limit(6);
-      const products = await cursor.toArray();
-      res.send(products);
+      try {
+        const cursor = allproductsCollection.find({ status: "approved" }).sort({ rating: -1 }).limit(6);
+        const products = await cursor.toArray();
+        res.send(products);
+      } catch (err) {
+        console.error("Error fetching popular products:", err);
+        res.status(500).json({ error: "Failed to fetch popular products" });
+      }
     });
     //Get all  products details by id
     app.get("/products/:id", async (req, res) => {

@@ -7,7 +7,7 @@ const targetEmail = "tom@tom.com";
 async function makeAdmin() {
     const client = new MongoClient(uri);
     try {
-        await client.connect();
+      //  await client.connect();
         const db = client.db("shopDB");
 
         console.log(`Attempting to make ${targetEmail} a SUPER ADMIN...`);
@@ -39,7 +39,7 @@ async function makeAdmin() {
     } catch (error) {
         console.error("Error:", error.message);
     } finally {
-        await client.close();
+       // await client.close();
     }
 }
 
