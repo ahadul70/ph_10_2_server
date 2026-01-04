@@ -13,7 +13,7 @@ const admin = require("firebase-admin");
 const fs = require('fs');
 const path = require('path');
 
-const serviceAccountKeyPath = path.join(__dirname, 'serviceAccountKey.json');
+//const serviceAccountKeyPath = path.join(__dirname, 'serviceAccountKey.json');
 
 if (process.env.fb_service_key) {
   try {
@@ -486,8 +486,8 @@ async function run() {
     });
 
     // ✅ Confirm connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("✅ Connected to MongoDB successfully!");
+// await client.db("admin").command({ ping: 1 });
+// console.log("✅ Connected to MongoDB successfully!");
   } catch (err) {
     console.error(err);
   }
