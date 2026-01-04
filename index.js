@@ -486,8 +486,8 @@ async function run() {
     });
 
     // ✅ Confirm connection
-// await client.db("admin").command({ ping: 1 });
-// console.log("✅ Connected to MongoDB successfully!");
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("✅ Connected to MongoDB successfully!");
   } catch (err) {
     console.error(err);
   }
@@ -495,6 +495,11 @@ async function run() {
 }
 run().catch(console.dir);
 
-app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-});
+
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`🚀 Server is running on http://localhost:${port}`);
+  });
+}
+
+module.exports = app;
