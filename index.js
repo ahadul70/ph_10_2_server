@@ -495,11 +495,6 @@ async function run() {
 }
 run().catch(console.dir);
 
-
-if (require.main === module) {
-  app.listen(port, () => {
-    console.log(`🚀 Server is running on http://localhost:${port}`);
-  });
-}
-
-module.exports = app;
+app.listen(port, () => {
+  console.log(`🚀 Server is running on http://localhost:${port}`);
+});
