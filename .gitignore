@@ -3,3 +3,4 @@ convert.js
 .vercel
 .env
 serviceAccountKey.json
+vercel.json 
